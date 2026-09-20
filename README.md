@@ -91,9 +91,13 @@ The extension:
 - includes local file paths in the prompt
 - forwards inbound images as image inputs to pi
 
-### Ask for files back
+### Send files to Telegram
 
-If you ask pi for a file or generated artifact, pi should call the `telegram_attach` tool. The extension then sends those files with the next Telegram reply.
+The `telegram_attach` tool sends local files to the paired chat whenever the bridge is connected.
+
+- During a Telegram-originated turn, it sends the files after the final text reply.
+- During a terminal-originated turn, it sends the files immediately.
+- The extension does not impose an attachment-count limit. Telegram's API limits still apply.
 
 Examples:
 - `summarize this image`
@@ -117,9 +121,11 @@ or:
 
 That aborts the active pi turn.
 
-### Queue follow-ups
+### Send messages while pi is running
 
-If you send more Telegram messages while pi is busy, they are queued and processed in order.
+Messages sent while pi is working are delivered with pi's `steer` behavior. Pi finishes the current assistant step, includes the new message before its next model call, and keeps working. Attachments follow the same path.
+
+The footer uses `replying` while a Telegram response is active. `incoming` means Telegram messages have arrived but pi has not inserted them into the run yet.
 
 ## Streaming
 
@@ -132,7 +138,8 @@ It tries Telegram draft streaming first with `sendMessageDraft`. If that is not 
 - Only one pi session should be connected to the bot at a time
 - Replies are sent as normal Telegram messages, not quote-replies
 - Long replies are split below Telegram's 4096 character limit
-- Outbound files are sent via `telegram_attach`
+- Outbound files are sent via `telegram_attach`, including from terminal-originated turns
+- Temporary Telegram network failures are retried
 
 ## License
 
