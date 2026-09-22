@@ -676,7 +676,7 @@ export default function (pi: ExtensionAPI) {
 
 			const result = await pi.exec("whisper", args, { timeout: WHISPER_TIMEOUT_MS });
 			if (result.code !== 0) {
-				const detail = (result.stderr || result.stdout).trim();
+				const detail = (result.stderr || result.stdout).trim().slice(-1000);
 				return { error: detail || `whisper exited with code ${result.code}` };
 			}
 
