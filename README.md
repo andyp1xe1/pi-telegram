@@ -91,6 +91,27 @@ The extension:
 - includes local file paths in the prompt
 - forwards inbound images as image inputs to pi
 
+### Send voice messages
+
+When the `whisper` command is available, the extension transcribes Telegram voice messages locally before forwarding them to pi. The prompt includes both the transcript and the original audio path, so pi can respond immediately while retaining access to the source recording. Other audio attachments are forwarded unchanged for explicit inspection.
+
+Install [OpenAI Whisper](https://github.com/openai/whisper) using your package manager. On NixOS:
+
+```bash
+nix profile install nixpkgs#openai-whisper
+```
+
+The first transcription downloads the selected model. Later transcriptions reuse the local model cache. Audio is not sent to a transcription service.
+
+The default model is `base`. Override it, or optionally skip automatic language detection, with environment variables:
+
+```bash
+export PI_TELEGRAM_WHISPER_MODEL=small
+export PI_TELEGRAM_WHISPER_LANGUAGE=en
+```
+
+If Whisper is unavailable or transcription fails, the extension still forwards the original audio path and includes the failure in the prompt.
+
 ### Send files to Telegram
 
 The `telegram_attach` tool sends local files to the paired chat whenever the bridge is connected.

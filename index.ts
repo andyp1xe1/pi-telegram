@@ -7,6 +7,8 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
+import { transcribeAudioFile } from "./src/audio-transcription.ts";
+
 interface TelegramConfig {
 	botToken?: string;
 	botUsername?: string;
@@ -98,6 +100,7 @@ interface TelegramFileInfo {
 	fileName: string;
 	mimeType?: string;
 	isImage: boolean;
+	isVoice: boolean;
 }
 
 interface TelegramMessage {
@@ -134,6 +137,7 @@ interface DownloadedTelegramFile {
 	path: string;
 	fileName: string;
 	isImage: boolean;
+	isVoice: boolean;
 	mimeType?: string;
 }
 
@@ -660,6 +664,7 @@ export default function (pi: ExtensionAPI) {
 						fileName: `photo-${message.message_id}.jpg`,
 						mimeType: "image/jpeg",
 						isImage: true,
+						isVoice: false,
 					});
 				}
 			}
@@ -670,6 +675,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.document.mime_type,
 					isImage: isImageMimeType(message.document.mime_type),
+					isVoice: false,
 				});
 			}
 			if (message.video) {
@@ -679,6 +685,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.video.mime_type,
 					isImage: false,
+					isVoice: false,
 				});
 			}
 			if (message.audio) {
@@ -688,6 +695,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.audio.mime_type,
 					isImage: false,
+					isVoice: false,
 				});
 			}
 			if (message.voice) {
@@ -696,6 +704,7 @@ export default function (pi: ExtensionAPI) {
 					fileName: `voice-${message.message_id}${guessExtensionFromMime(message.voice.mime_type, ".ogg")}`,
 					mimeType: message.voice.mime_type,
 					isImage: false,
+					isVoice: true,
 				});
 			}
 			if (message.animation) {
@@ -705,6 +714,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.animation.mime_type,
 					isImage: false,
+					isVoice: false,
 				});
 			}
 			if (message.sticker) {
@@ -713,6 +723,7 @@ export default function (pi: ExtensionAPI) {
 					fileName: `sticker-${message.message_id}.webp`,
 					mimeType: "image/webp",
 					isImage: true,
+					isVoice: false,
 				});
 			}
 		}
@@ -723,7 +734,7 @@ export default function (pi: ExtensionAPI) {
 		const downloaded: DownloadedTelegramFile[] = [];
 		for (const file of collectTelegramFileInfos(messages)) {
 			const path = await downloadTelegramFile(file.file_id, file.fileName);
-			downloaded.push({ path, fileName: file.fileName, isImage: file.isImage, mimeType: file.mimeType });
+			downloaded.push({ path, fileName: file.fileName, isImage: file.isImage, isVoice: file.isVoice, mimeType: file.mimeType });
 		}
 		return downloaded;
 	}
@@ -775,6 +786,17 @@ export default function (pi: ExtensionAPI) {
 		if (rawText.length > 0) {
 			prompt += ` ${rawText}`;
 		}
+
+		for (const file of files) {
+			if (!file.isVoice) continue;
+			const transcript = await transcribeAudioFile(pi, file.path, TEMP_DIR);
+			if (transcript.text) {
+				prompt += `\n\nLocal transcript of ${file.fileName}:\n${transcript.text}`;
+			} else {
+				prompt += `\n\nLocal transcription of ${file.fileName} failed: ${transcript.error ?? "unknown error"}`;
+			}
+		}
+
 		if (files.length > 0) {
 			prompt += `\n\nTelegram attachments were saved locally:`;
 			for (const file of files) {
