@@ -1,11 +1,13 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join, parse } from "node:path";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { homedir } from "node:os";
 
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+
+import { transcribeAudioFile } from "./src/audio-transcription.ts";
 
 interface TelegramConfig {
 	botToken?: string;
@@ -98,7 +100,7 @@ interface TelegramFileInfo {
 	fileName: string;
 	mimeType?: string;
 	isImage: boolean;
-	isAudio: boolean;
+	isVoice: boolean;
 }
 
 interface TelegramMessage {
@@ -135,7 +137,7 @@ interface DownloadedTelegramFile {
 	path: string;
 	fileName: string;
 	isImage: boolean;
-	isAudio: boolean;
+	isVoice: boolean;
 	mimeType?: string;
 }
 
@@ -174,9 +176,6 @@ const MAX_MESSAGE_LENGTH = 4096;
 const PREVIEW_THROTTLE_MS = 750;
 const TELEGRAM_DRAFT_ID_MAX = 2_147_483_647;
 const TELEGRAM_MEDIA_GROUP_DEBOUNCE_MS = 1200;
-const WHISPER_MODEL = process.env.PI_TELEGRAM_WHISPER_MODEL?.trim() || "base";
-const WHISPER_LANGUAGE = process.env.PI_TELEGRAM_WHISPER_LANGUAGE?.trim();
-const WHISPER_TIMEOUT_MS = 5 * 60 * 1000;
 
 const SYSTEM_PROMPT_SUFFIX = `
 
@@ -220,10 +219,6 @@ function guessMediaType(path: string): string | undefined {
 
 function isImageMimeType(mimeType: string | undefined): boolean {
 	return mimeType?.toLowerCase().startsWith("image/") ?? false;
-}
-
-function isAudioMimeType(mimeType: string | undefined): boolean {
-	return mimeType?.toLowerCase().startsWith("audio/") ?? false;
 }
 
 function formatTokens(count: number): string {
@@ -658,38 +653,6 @@ export default function (pi: ExtensionAPI) {
 		return {};
 	}
 
-	async function transcribeAudioFile(file: DownloadedTelegramFile): Promise<{ text?: string; error?: string }> {
-		const outputDir = await mkdtemp(join(TEMP_DIR, ".whisper-"));
-		try {
-			const args = [
-				file.path,
-				"--model",
-				WHISPER_MODEL,
-				"--output_dir",
-				outputDir,
-				"--output_format",
-				"txt",
-				"--fp16",
-				"False",
-			];
-			if (WHISPER_LANGUAGE) args.push("--language", WHISPER_LANGUAGE);
-
-			const result = await pi.exec("whisper", args, { timeout: WHISPER_TIMEOUT_MS });
-			if (result.code !== 0) {
-				const detail = (result.stderr || result.stdout).trim().slice(-1000);
-				return { error: detail || `whisper exited with code ${result.code}` };
-			}
-
-			const transcriptPath = join(outputDir, `${parse(file.path).name}.txt`);
-			const text = (await readFile(transcriptPath, "utf8")).trim();
-			return text.length > 0 ? { text } : { error: "whisper produced an empty transcript" };
-		} catch (error) {
-			return { error: error instanceof Error ? error.message : String(error) };
-		} finally {
-			await rm(outputDir, { recursive: true, force: true });
-		}
-	}
-
 	function collectTelegramFileInfos(messages: TelegramMessage[]): TelegramFileInfo[] {
 		const files: TelegramFileInfo[] = [];
 		for (const message of messages) {
@@ -701,7 +664,7 @@ export default function (pi: ExtensionAPI) {
 						fileName: `photo-${message.message_id}.jpg`,
 						mimeType: "image/jpeg",
 						isImage: true,
-						isAudio: false,
+						isVoice: false,
 					});
 				}
 			}
@@ -712,7 +675,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.document.mime_type,
 					isImage: isImageMimeType(message.document.mime_type),
-					isAudio: isAudioMimeType(message.document.mime_type),
+					isVoice: false,
 				});
 			}
 			if (message.video) {
@@ -722,7 +685,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.video.mime_type,
 					isImage: false,
-					isAudio: false,
+					isVoice: false,
 				});
 			}
 			if (message.audio) {
@@ -732,7 +695,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.audio.mime_type,
 					isImage: false,
-					isAudio: true,
+					isVoice: false,
 				});
 			}
 			if (message.voice) {
@@ -741,7 +704,7 @@ export default function (pi: ExtensionAPI) {
 					fileName: `voice-${message.message_id}${guessExtensionFromMime(message.voice.mime_type, ".ogg")}`,
 					mimeType: message.voice.mime_type,
 					isImage: false,
-					isAudio: true,
+					isVoice: true,
 				});
 			}
 			if (message.animation) {
@@ -751,7 +714,7 @@ export default function (pi: ExtensionAPI) {
 					fileName,
 					mimeType: message.animation.mime_type,
 					isImage: false,
-					isAudio: false,
+					isVoice: false,
 				});
 			}
 			if (message.sticker) {
@@ -760,7 +723,7 @@ export default function (pi: ExtensionAPI) {
 					fileName: `sticker-${message.message_id}.webp`,
 					mimeType: "image/webp",
 					isImage: true,
-					isAudio: false,
+					isVoice: false,
 				});
 			}
 		}
@@ -771,7 +734,7 @@ export default function (pi: ExtensionAPI) {
 		const downloaded: DownloadedTelegramFile[] = [];
 		for (const file of collectTelegramFileInfos(messages)) {
 			const path = await downloadTelegramFile(file.file_id, file.fileName);
-			downloaded.push({ path, fileName: file.fileName, isImage: file.isImage, isAudio: file.isAudio, mimeType: file.mimeType });
+			downloaded.push({ path, fileName: file.fileName, isImage: file.isImage, isVoice: file.isVoice, mimeType: file.mimeType });
 		}
 		return downloaded;
 	}
@@ -825,8 +788,8 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		for (const file of files) {
-			if (!file.isAudio) continue;
-			const transcript = await transcribeAudioFile(file);
+			if (!file.isVoice) continue;
+			const transcript = await transcribeAudioFile(pi, file.path, TEMP_DIR);
 			if (transcript.text) {
 				prompt += `\n\nLocal transcript of ${file.fileName}:\n${transcript.text}`;
 			} else {

@@ -93,7 +93,7 @@ The extension:
 
 ### Send voice messages
 
-When the `whisper` command is available, the extension transcribes voice messages and audio files locally before forwarding them to pi. The prompt includes both the transcript and the original audio path, so pi can usually respond immediately while retaining access to the source recording.
+When the `whisper` command is available, the extension transcribes Telegram voice messages locally before forwarding them to pi. The prompt includes both the transcript and the original audio path, so pi can respond immediately while retaining access to the source recording. Other audio attachments are forwarded unchanged for explicit inspection.
 
 Install [OpenAI Whisper](https://github.com/openai/whisper) using your package manager. On NixOS:
 
